@@ -19,23 +19,6 @@ interface Drag {
   pitch: number;
 }
 
-/** File System Access API save dialog (Chrome, Edge); not in the TypeScript DOM types yet. */
-interface SaveHandle {
-  createWritable(): Promise<{ write(data: Blob): Promise<void>; close(): Promise<void> }>;
-}
-
-declare global {
-  interface Window {
-    showSaveFilePicker?: (options: {
-      suggestedName?: string;
-      startIn?: 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos';
-      types?: { description: string; accept: Record<string, string[]> }[];
-    }) => Promise<SaveHandle>;
-  }
-}
-
-const canPickFolder = typeof window.showSaveFilePicker === 'function' && window.self === window.top;
-
 let nextId = 1;
 
 const isPdf = (f: File) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
@@ -133,37 +116,16 @@ export default function App() {
   const loading = items.some((it) => it.pages === null && !it.error);
 
   const combine = async () => {
-    const fileName = `${name.trim().replace(/\.pdf$/i, '') || 'combined'}.pdf`;
-    setError(null);
-    // Where supported, ask for the folder and name first: the save dialog must open straight from the click.
-    let handle: SaveHandle | null = null;
-    if (canPickFolder) {
-      try {
-        handle = await window.showSaveFilePicker!({
-          suggestedName: fileName,
-          startIn: 'downloads',
-          types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
-        });
-      } catch (e) {
-        if (e instanceof DOMException && e.name === 'AbortError') return;
-        handle = null;
-      }
-    }
     setBusy(true);
+    setError(null);
     try {
-      const blob = new Blob([(await mergePdfs(readable.map((it) => it.file))) as BlobPart], { type: 'application/pdf' });
-      if (handle) {
-        const w = await handle.createWritable();
-        await w.write(blob);
-        await w.close();
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-      }
+      const bytes = await mergePdfs(readable.map((it) => it.file));
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.trim().replace(/\.pdf$/i, '') || 'combined'}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (e) {
       setError(`The PDFs could not be combined: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -200,7 +162,7 @@ export default function App() {
                 title={readable.length < 2 ? 'Add at least two PDFs' : undefined}
               >
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Files className="w-3.5 h-3.5" />}
-                <span>{busy ? 'Combining…' : canPickFolder ? 'Combine and Save…' : 'Combine and Download'}</span>
+                <span>{busy ? 'Combining…' : 'Combine and Download'}</span>
               </button>
             </div>
           </div>
