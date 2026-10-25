@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FilePlus, Files, GripVertical, Loader2, Trash2, X } from 'lucide-react';
 import { AppHeader, Banner, Dash, ResultsHeader, StatusChip } from 'engineering-ui';
 import { mergePdfs, pageCount } from './merge';
@@ -8,6 +8,15 @@ interface Item {
   file: File;
   pages: number | null;
   error?: string;
+}
+
+/** A tile being dragged: its index at the start, the pointer's start and offset, and the tile spacing (px). */
+interface Drag {
+  id: number;
+  from: number;
+  startY: number;
+  dy: number;
+  pitch: number;
 }
 
 let nextId = 1;
@@ -23,7 +32,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [dragId, setDragId] = useState<number | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const [settle, setSettle] = useState<{ id: number; dy: number; animate: boolean } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
 
@@ -49,22 +59,54 @@ export default function App() {
       return next;
     });
 
-  // Pointer-based dragging (mouse, pen and touch): the dragged row moves live to the slot under the pointer.
+  // Pointer-based dragging (mouse, pen and touch). The dragged tile follows the pointer and the tiles it passes
+  // slide out of the way; the order itself only changes on release, when the tile glides into its slot.
   const startDrag = (e: React.PointerEvent<HTMLLIElement>, id: number) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button') || !list.current) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    setDragId(id);
+    const rows = list.current.children;
+    const pitch = rows.length > 1 ? rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top : 0;
+    setSettle(null);
+    setDrag({ id, from: items.findIndex((it) => it.id === id), startY: e.clientY, dy: 0, pitch });
   };
 
+  const dragTarget = (d: Drag) => Math.min(items.length - 1, Math.max(0, d.from + Math.round(d.dy / (d.pitch || 1))));
+
   const onDragMove = (e: React.PointerEvent) => {
-    if (dragId === null || !list.current) return;
-    const from = items.findIndex((it) => it.id === dragId);
-    const rows = Array.from(list.current.children) as HTMLElement[];
-    const to = rows.filter((r, k) => {
-      const b = r.getBoundingClientRect();
-      return k !== from && b.top + b.height / 2 < e.clientY;
-    }).length;
-    if (to !== from) move(from, to);
+    if (!drag) return;
+    const dy = Math.min((items.length - 1 - drag.from) * drag.pitch, Math.max(-drag.from * drag.pitch, e.clientY - drag.startY));
+    setDrag({ ...drag, dy });
+  };
+
+  const endDrag = () => {
+    if (!drag) return;
+    const to = dragTarget(drag);
+    move(drag.from, to);
+    const dy = drag.dy - (to - drag.from) * drag.pitch;
+    setSettle(dy ? { id: drag.id, dy, animate: false } : null);
+    setDrag(null);
+  };
+
+  // After a drop, start the glide on the next frame so the tile first renders where it was let go.
+  useEffect(() => {
+    if (!settle) return;
+    if (settle.animate) {
+      const t = setTimeout(() => setSettle(null), 200);
+      return () => clearTimeout(t);
+    }
+    let raf = requestAnimationFrame(() => (raf = requestAnimationFrame(() => setSettle({ ...settle, dy: 0, animate: true }))));
+    return () => cancelAnimationFrame(raf);
+  }, [settle]);
+
+  const tileStyle = (id: number, k: number): React.CSSProperties => {
+    if (drag) {
+      if (id === drag.id) return { transform: `translateY(${drag.dy}px)` };
+      const to = dragTarget(drag);
+      const shift = drag.from < k && k <= to ? -drag.pitch : to <= k && k < drag.from ? drag.pitch : 0;
+      return { transform: `translateY(${shift}px)`, transition: 'transform 150ms ease' };
+    }
+    if (settle?.id === id) return { transform: `translateY(${settle.dy}px)`, transition: settle.animate ? 'transform 150ms ease' : undefined };
+    return {};
   };
 
   const remove = (id: number) => setItems((prev) => prev.filter((p) => p.id !== id));
@@ -177,8 +219,9 @@ export default function App() {
                         title="Drag to reorder (or focus and use the arrow keys)"
                         onPointerDown={(e) => startDrag(e, it.id)}
                         onPointerMove={onDragMove}
-                        onPointerUp={() => setDragId(null)}
-                        onPointerCancel={() => setDragId(null)}
+                        onPointerUp={endDrag}
+                        onPointerCancel={endDrag}
+                        style={tileStyle(it.id, i)}
                         onKeyDown={(e) => {
                           if (e.key === 'ArrowUp' && i > 0) move(i, i - 1);
                           else if (e.key === 'ArrowDown' && i < items.length - 1) move(i, i + 1);
@@ -186,7 +229,9 @@ export default function App() {
                           e.preventDefault();
                         }}
                         className={`flex items-center gap-2 h-10 pl-1.5 pr-1 rounded-lg border bg-white text-xs text-slate-800 tabular-nums select-none touch-none cursor-grab focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                          dragId === it.id ? 'relative z-10 border-blue-500 shadow-md cursor-grabbing' : 'border-slate-200 hover:bg-slate-50'
+                          drag?.id === it.id || settle?.id === it.id
+                            ? 'relative z-10 border-blue-500 shadow-md cursor-grabbing'
+                            : `border-slate-200 ${drag ? '' : 'hover:bg-slate-50'}`
                         }`}
                       >
                         <GripVertical className="w-4 h-4 shrink-0 text-slate-400" />
