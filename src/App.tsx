@@ -28,6 +28,7 @@ declare global {
   interface Window {
     showSaveFilePicker?: (options: {
       suggestedName?: string;
+      startIn?: 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos';
       types?: { description: string; accept: Record<string, string[]> }[];
     }) => Promise<SaveHandle>;
   }
@@ -140,6 +141,7 @@ export default function App() {
       try {
         handle = await window.showSaveFilePicker!({
           suggestedName: fileName,
+          startIn: 'downloads',
           types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
         });
       } catch (e) {
