@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, FilePlus, Files, Loader2, Trash2, X } from 'lucide-react';
-import { AppHeader, Banner, Cols, Dash, ResultsHeader, StatusChip } from 'engineering-ui';
+import { FilePlus, Files, GripVertical, Loader2, Trash2, X } from 'lucide-react';
+import { AppHeader, Banner, Dash, ResultsHeader, StatusChip } from 'engineering-ui';
 import { mergePdfs, pageCount } from './merge';
 
 interface Item {
@@ -23,7 +23,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [dragId, setDragId] = useState<number | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLUListElement>(null);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -40,12 +42,30 @@ export default function App() {
     }
   };
 
-  const move = (i: number, d: -1 | 1) =>
+  const move = (from: number, to: number) =>
     setItems((prev) => {
       const next = [...prev];
-      [next[i], next[i + d]] = [next[i + d], next[i]];
+      next.splice(to, 0, ...next.splice(from, 1));
       return next;
     });
+
+  // Pointer-based dragging (mouse, pen and touch): the dragged row moves live to the slot under the pointer.
+  const startDrag = (e: React.PointerEvent<HTMLLIElement>, id: number) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragId(id);
+  };
+
+  const onDragMove = (e: React.PointerEvent) => {
+    if (dragId === null || !list.current) return;
+    const from = items.findIndex((it) => it.id === dragId);
+    const rows = Array.from(list.current.children) as HTMLElement[];
+    const to = rows.filter((r, k) => {
+      const b = r.getBoundingClientRect();
+      return k !== from && b.top + b.height / 2 < e.clientY;
+    }).length;
+    if (to !== from) move(from, to);
+  };
 
   const remove = (id: number) => setItems((prev) => prev.filter((p) => p.id !== id));
 
@@ -109,6 +129,7 @@ export default function App() {
             <div
               className={`panel ${dragging ? 'ring-2 ring-blue-500' : ''}`}
               onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes('Files')) return;
                 e.preventDefault();
                 setDragging(true);
               }}
@@ -148,53 +169,45 @@ export default function App() {
                 </button>
               ) : (
                 <>
-                  <div className="overflow-x-auto">
-                    <table className="rtable min-w-[480px]">
-                      <Cols w={[8, 52, 12, 12, 16]} />
-                      <thead>
-                        <tr>
-                          <th>No.</th>
-                          <th className="!text-left">File</th>
-                          <th>Pages</th>
-                          <th>Size</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((it, i) => (
-                          <tr key={it.id}>
-                            <td>{i + 1}</td>
-                            <td className="!text-left truncate" title={it.file.name}>
-                              {it.file.name}
-                            </td>
-                            <td>
-                              {it.error ? (
-                                <span className="text-rose-700 font-semibold" title={it.error}>Error</span>
-                              ) : it.pages === null ? (
-                                <Dash />
-                              ) : (
-                                it.pages
-                              )}
-                            </td>
-                            <td>{sizeText(it.file.size)}</td>
-                            <td>
-                              <div className="inline-flex items-center gap-0.5">
-                                <IconBtn label="Move up" disabled={i === 0} onClick={() => move(i, -1)}>
-                                  <ArrowUp className="w-3.5 h-3.5" />
-                                </IconBtn>
-                                <IconBtn label="Move down" disabled={i === items.length - 1} onClick={() => move(i, 1)}>
-                                  <ArrowDown className="w-3.5 h-3.5" />
-                                </IconBtn>
-                                <IconBtn label="Remove" onClick={() => remove(it.id)}>
-                                  <X className="w-3.5 h-3.5" />
-                                </IconBtn>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <ul ref={list} className="space-y-1.5">
+                    {items.map((it, i) => (
+                      <li
+                        key={it.id}
+                        tabIndex={0}
+                        title="Drag to reorder (or focus and use the arrow keys)"
+                        onPointerDown={(e) => startDrag(e, it.id)}
+                        onPointerMove={onDragMove}
+                        onPointerUp={() => setDragId(null)}
+                        onPointerCancel={() => setDragId(null)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowUp' && i > 0) move(i, i - 1);
+                          else if (e.key === 'ArrowDown' && i < items.length - 1) move(i, i + 1);
+                          else return;
+                          e.preventDefault();
+                        }}
+                        className={`flex items-center gap-2 h-10 pl-1.5 pr-1 rounded-lg border bg-white text-xs text-slate-800 tabular-nums select-none touch-none cursor-grab focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                          dragId === it.id ? 'relative z-10 border-blue-500 shadow-md cursor-grabbing' : 'border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <GripVertical className="w-4 h-4 shrink-0 text-slate-400" />
+                        <span className="w-5 shrink-0 text-right text-slate-500">{i + 1}</span>
+                        <span className="flex-1 min-w-0 truncate font-medium">{it.file.name}</span>
+                        <span className="w-16 shrink-0 text-right">
+                          {it.error ? (
+                            <span className="text-rose-700 font-semibold" title={it.error}>Error</span>
+                          ) : it.pages === null ? (
+                            <Dash />
+                          ) : (
+                            `${it.pages} ${it.pages === 1 ? 'page' : 'pages'}`
+                          )}
+                        </span>
+                        <span className="w-16 shrink-0 text-right text-slate-500">{sizeText(it.file.size)}</span>
+                        <IconBtn label="Remove" onClick={() => remove(it.id)}>
+                          <X className="w-3.5 h-3.5" />
+                        </IconBtn>
+                      </li>
+                    ))}
+                  </ul>
                   <div className="flex gap-2">
                     <button type="button" className="btn" onClick={() => input.current?.click()}>
                       <FilePlus className="w-3.5 h-3.5" />
