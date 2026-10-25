@@ -1,4 +1,4 @@
-# CombinePDF
+# PeeDeeEff
 
 Combines several PDF files into one, in the browser. Files are not uploaded anywhere.
 

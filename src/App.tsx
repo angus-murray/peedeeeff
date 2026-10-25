@@ -141,7 +141,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <AppHeader name="CombinePDF" />
+      <AppHeader name="PeeDeeEff" />
       <main className="max-w-7xl mx-auto p-3">
         <div className="tab-grid">
           <div className="input-column scroll-thin">
