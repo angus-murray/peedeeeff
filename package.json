@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
     "engineering-ui": "github:angus-murray/engineering-ui#4fe10ab6074010057da92095e78fa67687eccb4e",
     "lucide-react": "^1.61.0",
-    "pdf-lib": "^1.17.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

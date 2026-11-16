@@ -1,0 +1,232 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { FilePlus, Files, GripVertical, Loader2, Trash2, X } from 'lucide-react';
+import { Banner, Dash, ResultsHeader, StatusChip } from 'engineering-ui';
+import { PasswordRequiredError, downloadPdf, inspect, mergePdfs } from './pdf';
+import { DropArea, IconBtn, baseName, isPdf, sizeText, useFileDrop, usePdfPicker } from './ui';
+
+interface Item {
+  id: number;
+  file: File;
+  pages: number | null;
+  error?: string;
+}
+
+/** A tile being dragged: its index at the start, the pointer's start and offset, and the tile spacing (px). */
+interface Drag {
+  id: number;
+  from: number;
+  startY: number;
+  dy: number;
+  pitch: number;
+}
+
+let nextId = 1;
+
+export default function CombineTab() {
+  const [items, setItems] = useState<Item[]>([]);
+  const [name, setName] = useState('combined');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const [settle, setSettle] = useState<{ id: number; dy: number; animate: boolean } | null>(null);
+  const list = useRef<HTMLUListElement>(null);
+
+  const addFiles = (files: FileList) => {
+    const all = Array.from(files);
+    const pdfs = all.filter(isPdf);
+    setError(all.length > pdfs.length ? `${all.length - pdfs.length} file(s) skipped: not PDF.` : null);
+    const added = pdfs.map((file) => ({ id: nextId++, file, pages: null }));
+    setItems((prev) => [...prev, ...added]);
+    for (const it of added) {
+      inspect(it.file).then(
+        ({ pages }) => setItems((prev) => prev.map((p) => (p.id === it.id ? { ...p, pages } : p))),
+        (e) => {
+          const error = e instanceof PasswordRequiredError ? 'Password protected: remove it in the Unlock tab first' : 'Cannot be read';
+          setItems((prev) => prev.map((p) => (p.id === it.id ? { ...p, error } : p)));
+        }
+      );
+    }
+  };
+
+  const { dragging, dropProps } = useFileDrop(addFiles);
+  const picker = usePdfPicker(addFiles, true);
+
+  const move = (from: number, to: number) =>
+    setItems((prev) => {
+      const next = [...prev];
+      next.splice(to, 0, ...next.splice(from, 1));
+      return next;
+    });
+
+  // Pointer-based dragging (mouse, pen and touch). The dragged tile follows the pointer and the tiles it passes
+  // slide out of the way; the order itself only changes on release, when the tile glides into its slot.
+  const startDrag = (e: React.PointerEvent<HTMLLIElement>, id: number) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button') || !list.current) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rows = list.current.children;
+    const pitch = rows.length > 1 ? rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top : 0;
+    setSettle(null);
+    setDrag({ id, from: items.findIndex((it) => it.id === id), startY: e.clientY, dy: 0, pitch });
+  };
+
+  const dragTarget = (d: Drag) => Math.min(items.length - 1, Math.max(0, d.from + Math.round(d.dy / (d.pitch || 1))));
+
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const dy = Math.min((items.length - 1 - drag.from) * drag.pitch, Math.max(-drag.from * drag.pitch, e.clientY - drag.startY));
+    setDrag({ ...drag, dy });
+  };
+
+  const endDrag = () => {
+    if (!drag) return;
+    const to = dragTarget(drag);
+    move(drag.from, to);
+    const dy = drag.dy - (to - drag.from) * drag.pitch;
+    setSettle(dy ? { id: drag.id, dy, animate: false } : null);
+    setDrag(null);
+  };
+
+  // After a drop, start the glide on the next frame so the tile first renders where it was let go.
+  useEffect(() => {
+    if (!settle) return;
+    if (settle.animate) {
+      const t = setTimeout(() => setSettle(null), 200);
+      return () => clearTimeout(t);
+    }
+    let raf = requestAnimationFrame(() => (raf = requestAnimationFrame(() => setSettle({ ...settle, dy: 0, animate: true }))));
+    return () => cancelAnimationFrame(raf);
+  }, [settle]);
+
+  const tileStyle = (id: number, k: number): React.CSSProperties => {
+    if (drag) {
+      if (id === drag.id) return { transform: `translateY(${drag.dy}px)` };
+      const to = dragTarget(drag);
+      const shift = drag.from < k && k <= to ? -drag.pitch : to <= k && k < drag.from ? drag.pitch : 0;
+      return { transform: `translateY(${shift}px)`, transition: 'transform 150ms ease' };
+    }
+    if (settle?.id === id) return { transform: `translateY(${settle.dy}px)`, transition: settle.animate ? 'transform 150ms ease' : undefined };
+    return {};
+  };
+
+  const remove = (id: number) => setItems((prev) => prev.filter((p) => p.id !== id));
+
+  const readable = items.filter((it) => !it.error);
+  const totalPages = readable.reduce((s, it) => s + (it.pages ?? 0), 0);
+  const loading = items.some((it) => it.pages === null && !it.error);
+
+  const combine = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      downloadPdf(await mergePdfs(readable.map((it) => it.file)), `${baseName(name) || 'combined'}.pdf`);
+    } catch (e) {
+      setError(`The PDFs could not be combined: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="tab-grid">
+      <div className="input-column scroll-thin">
+        <div className="panel">
+          <h2 className="panel-title">Output</h2>
+          <div>
+            <label className="label" htmlFor="name">File Name</label>
+            <div className="flex items-center gap-2">
+              <input id="name" className="control" value={name} onChange={(e) => setName(e.target.value)} />
+              <span className="text-xs text-slate-500">.pdf</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-primary w-full"
+            onClick={combine}
+            disabled={busy || loading || readable.length < 2}
+            title={readable.length < 2 ? 'Add at least two PDFs' : undefined}
+          >
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Files className="w-3.5 h-3.5" />}
+            <span>{busy ? 'Combining…' : 'Combine and Download'}</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="results-column">
+        <div className={`panel ${dragging ? 'ring-2 ring-blue-500' : ''}`} {...dropProps}>
+          <ResultsHeader title="Files">
+            {items.length > 0 && (
+              <StatusChip kind="neutral">
+                {readable.length} {readable.length === 1 ? 'file' : 'files'}, {totalPages} {totalPages === 1 ? 'page' : 'pages'}
+              </StatusChip>
+            )}
+          </ResultsHeader>
+
+          {error && <Banner kind="error" title={error} />}
+
+          {picker.input}
+
+          {items.length === 0 ? (
+            <DropArea label="Drop PDFs here or click to choose" onClick={picker.choose} />
+          ) : (
+            <>
+              <ul ref={list} className="space-y-1.5">
+                {items.map((it, i) => (
+                  <li
+                    key={it.id}
+                    tabIndex={0}
+                    title="Drag to reorder (or focus and use the arrow keys)"
+                    onPointerDown={(e) => startDrag(e, it.id)}
+                    onPointerMove={onDragMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                    style={tileStyle(it.id, i)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowUp' && i > 0) move(i, i - 1);
+                      else if (e.key === 'ArrowDown' && i < items.length - 1) move(i, i + 1);
+                      else return;
+                      e.preventDefault();
+                    }}
+                    className={`flex items-center gap-2 h-10 pl-1.5 pr-1 rounded-lg border bg-white text-xs text-slate-800 tabular-nums select-none touch-none cursor-grab focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      drag?.id === it.id || settle?.id === it.id
+                        ? 'relative z-10 border-blue-500 shadow-md cursor-grabbing'
+                        : `border-slate-200 ${drag ? '' : 'hover:bg-slate-50'}`
+                    }`}
+                  >
+                    <GripVertical className="w-4 h-4 shrink-0 text-slate-400" />
+                    <span className="w-5 shrink-0 text-right text-slate-500">{i + 1}</span>
+                    <span className="flex-1 min-w-0 truncate font-medium">{it.file.name}</span>
+                    <span className="w-16 shrink-0 text-right">
+                      {it.error ? (
+                        <span className="text-rose-700 font-semibold" title={it.error}>
+                          {it.error.startsWith('Password') ? 'Locked' : 'Error'}
+                        </span>
+                      ) : it.pages === null ? (
+                        <Dash />
+                      ) : (
+                        `${it.pages} ${it.pages === 1 ? 'page' : 'pages'}`
+                      )}
+                    </span>
+                    <span className="w-16 shrink-0 text-right text-slate-500">{sizeText(it.file.size)}</span>
+                    <IconBtn label="Remove" onClick={() => remove(it.id)}>
+                      <X className="w-3.5 h-3.5" />
+                    </IconBtn>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex gap-2">
+                <button type="button" className="btn" onClick={picker.choose}>
+                  <FilePlus className="w-3.5 h-3.5" />
+                  <span>Add PDFs</span>
+                </button>
+                <button type="button" className="btn" onClick={() => setItems([])}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear All</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
