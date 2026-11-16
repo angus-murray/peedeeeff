@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff, FileText, Loader2, LockOpen, X } from 'lucide-react';
-import { Banner, Dash, ResultsHeader, StatusChip } from 'engineering-ui';
+import { Banner, ResultsHeader, StatusChip } from 'engineering-ui';
 import { PasswordRequiredError, Protection, WrongPasswordError, downloadPdf, inspect, unlockPdf } from './pdf';
-import { DropArea, IconBtn, baseName, isPdf, sizeText, useFileDrop, usePdfPicker } from './ui';
+import { DropArea, IconBtn, ProgressBar, baseName, isPdf, sizeText, useFileDrop, usePdfPicker } from './ui';
 
 interface Picked {
   file: File;
   pages: number | null;
   protection: Protection | null;
+  progress: number;
 }
 
 const PROTECTION: Record<Protection, { kind: 'neutral' | 'warn'; text: string; tip: string }> = {
@@ -26,6 +27,7 @@ export default function UnlockTab() {
   const [show, setShow] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -33,11 +35,12 @@ export default function UnlockTab() {
     const file = Array.from(files).find(isPdf);
     setError(file ? null : 'Not a PDF file.');
     if (!file) return;
-    setPicked({ file, pages: null, protection: null });
+    setPicked({ file, pages: null, protection: null, progress: 0 });
     setName(`${baseName(file.name)}-unlocked`);
     setPassword('');
     setDone(false);
-    inspect(file).then(
+    const onProgress = (progress: number) => setPicked((p) => (p?.file === file ? { ...p, progress } : p));
+    inspect(file, undefined, onProgress).then(
       ({ pages, protection }) => setPicked((p) => (p?.file === file ? { ...p, pages, protection } : p)),
       (e) => {
         if (e instanceof PasswordRequiredError) setPicked((p) => (p?.file === file ? { ...p, protection: 'password' } : p));
@@ -59,9 +62,10 @@ export default function UnlockTab() {
   const unlock = async () => {
     if (!picked || !canUnlock) return;
     setBusy(true);
+    setProgress(0);
     setError(null);
     try {
-      downloadPdf(await unlockPdf(picked.file, password), `${baseName(name) || 'unlocked'}.pdf`);
+      downloadPdf(await unlockPdf(picked.file, password, setProgress), `${baseName(name) || 'unlocked'}.pdf`);
       setDone(true);
       if (picked.pages === null) inspect(picked.file, password).then(({ pages }) => setPicked((p) => (p ? { ...p, pages } : p)));
     } catch (e) {
@@ -126,8 +130,9 @@ export default function UnlockTab() {
             title={!picked ? 'Choose a PDF' : protection === 'none' ? PROTECTION.none.tip : needsPassword && !password ? 'Enter the password' : undefined}
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LockOpen className="w-3.5 h-3.5" />}
-            <span>{busy ? 'Unlocking…' : 'Unlock and Download'}</span>
+            <span>{busy ? `Unlocking… ${Math.round(progress * 100)}%` : 'Unlock and Download'}</span>
           </button>
+          {busy && <ProgressBar value={progress} />}
         </form>
       </div>
 
@@ -157,7 +162,7 @@ export default function UnlockTab() {
                 <FileText className="w-4 h-4 shrink-0 text-slate-400" />
                 <span className="flex-1 min-w-0 truncate font-medium">{picked.file.name}</span>
                 <span className="w-16 shrink-0 text-right">
-                  {picked.pages === null ? <Dash /> : `${picked.pages} ${picked.pages === 1 ? 'page' : 'pages'}`}
+                  {picked.pages === null ? <ProgressBar value={picked.progress} className="my-1" /> : `${picked.pages} ${picked.pages === 1 ? 'page' : 'pages'}`}
                 </span>
                 <span className="w-16 shrink-0 text-right text-slate-500">{sizeText(picked.file.size)}</span>
                 <IconBtn

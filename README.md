@@ -11,6 +11,9 @@ password to open is shown as Locked and left out; unlock it first.
 password or restrictions. A PDF that opens without a password but restricts printing, copying or editing needs no
 password to unlock.
 
+A progress bar shows while each file is read, and while combining or unlocking, so large PDFs give feedback instead
+of a frozen button.
+
 Built with React, Vite, Tailwind CSS v4, `@cantoo/pdf-lib` (a fork of `pdf-lib` that can decrypt) and the shared `engineering-ui` styling.
 
 ```bash

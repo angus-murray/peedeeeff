@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FilePlus, Files, GripVertical, Loader2, Trash2, X } from 'lucide-react';
-import { Banner, Dash, ResultsHeader, StatusChip } from 'engineering-ui';
+import { Banner, ResultsHeader, StatusChip } from 'engineering-ui';
 import { PasswordRequiredError, downloadPdf, inspect, mergePdfs } from './pdf';
-import { DropArea, IconBtn, baseName, isPdf, sizeText, useFileDrop, usePdfPicker } from './ui';
+import { DropArea, IconBtn, ProgressBar, baseName, isPdf, sizeText, useFileDrop, usePdfPicker } from './ui';
 
 interface Item {
   id: number;
   file: File;
   pages: number | null;
+  progress: number;
   error?: string;
 }
 
@@ -26,6 +27,7 @@ export default function CombineTab() {
   const [items, setItems] = useState<Item[]>([]);
   const [name, setName] = useState('combined');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [settle, setSettle] = useState<{ id: number; dy: number; animate: boolean } | null>(null);
@@ -35,10 +37,11 @@ export default function CombineTab() {
     const all = Array.from(files);
     const pdfs = all.filter(isPdf);
     setError(all.length > pdfs.length ? `${all.length - pdfs.length} file(s) skipped: not PDF.` : null);
-    const added = pdfs.map((file) => ({ id: nextId++, file, pages: null }));
+    const added = pdfs.map((file) => ({ id: nextId++, file, pages: null, progress: 0 }));
     setItems((prev) => [...prev, ...added]);
     for (const it of added) {
-      inspect(it.file).then(
+      const setProgress = (progress: number) => setItems((prev) => prev.map((p) => (p.id === it.id ? { ...p, progress } : p)));
+      inspect(it.file, undefined, setProgress).then(
         ({ pages }) => setItems((prev) => prev.map((p) => (p.id === it.id ? { ...p, pages } : p))),
         (e) => {
           const error = e instanceof PasswordRequiredError ? 'Password protected: remove it in the Unlock tab first' : 'Cannot be read';
@@ -116,9 +119,10 @@ export default function CombineTab() {
 
   const combine = async () => {
     setBusy(true);
+    setProgress(0);
     setError(null);
     try {
-      downloadPdf(await mergePdfs(readable.map((it) => it.file)), `${baseName(name) || 'combined'}.pdf`);
+      downloadPdf(await mergePdfs(readable.map((it) => it.file), setProgress), `${baseName(name) || 'combined'}.pdf`);
     } catch (e) {
       setError(`The PDFs could not be combined: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -146,8 +150,9 @@ export default function CombineTab() {
             title={readable.length < 2 ? 'Add at least two PDFs' : undefined}
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Files className="w-3.5 h-3.5" />}
-            <span>{busy ? 'Combining…' : 'Combine and Download'}</span>
+            <span>{busy ? `Combining… ${Math.round(progress * 100)}%` : 'Combine and Download'}</span>
           </button>
+          {busy && <ProgressBar value={progress} />}
         </div>
       </div>
 
@@ -201,7 +206,7 @@ export default function CombineTab() {
                           {it.error.startsWith('Password') ? 'Locked' : 'Error'}
                         </span>
                       ) : it.pages === null ? (
-                        <Dash />
+                        <ProgressBar value={it.progress} className="my-1" />
                       ) : (
                         `${it.pages} ${it.pages === 1 ? 'page' : 'pages'}`
                       )}

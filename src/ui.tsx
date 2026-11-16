@@ -59,6 +59,16 @@ export const DropArea: React.FC<{ label: string; onClick: () => void }> = ({ lab
   </button>
 );
 
+/** Thin blue progress bar for a fraction between 0 and 1. */
+export const ProgressBar: React.FC<{ value: number; className?: string }> = ({ value, className }) => (
+  <div className={`h-1.5 w-full rounded-full bg-slate-100 overflow-hidden ${className ?? ''}`}>
+    <div
+      className="h-full bg-blue-600 rounded-full transition-[width] duration-150 ease-out"
+      style={{ width: `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%` }}
+    />
+  </div>
+);
+
 export const IconBtn: React.FC<{ label: string; disabled?: boolean; onClick: () => void; children: React.ReactNode }> = ({
   label,
   disabled,
